@@ -1,0 +1,90 @@
+
+    =================================================
+    Anomaly Detection Evaluation Results
+    Model: adapter_smd.pth
+    Dataset: SMD_test
+    Timestamp: Sun Nov  2 13:42:57 2025
+    =================================================
+    
+    [Execution Summary]
+    Total Evaluation Time: 2312.27s
+    Inference Time: 2304.17s
+    Total Time Points: 708420
+    Total Windows: 59028
+    
+    [Overall Performance (Point-wise)]
+    Area Under ROC Curve (AUC-ROC): 0.756672
+    Area Under PR Curve (AUC-PR): 0.182448
+    
+    [Metrics @ Optimal PA-F1 Threshold (0.080702)]
+    Point-Adjusted F1 (PA-F1):    0.013274
+    Point-Adjusted Precision: 0.007760
+    Point-Adjusted Recall:    0.045872
+    
+    (Standard Metrics at this threshold)
+    Standard F1-Score:    0.164462
+    Standard Precision: 0.594332
+    Standard Recall:    0.095435
+    
+    =================================================
+    
+    =================================================
+    Anomaly Detection Evaluation Results
+    Model: adapter_mitbih.pth
+    Dataset: MIT-BIH_test
+    Timestamp: Sun Nov  2 18:45:30 2025
+    =================================================
+    
+    [Execution Summary]
+    Total Evaluation Time: 9571.89s
+    Inference Time: 9504.41s
+    Total Time Points: 6500000
+    Total Windows: 541659
+    
+    [Overall Performance (Point-wise)]
+    Area Under ROC Curve (AUC-ROC): 0.843188
+    Area Under PR Curve (AUC-PR): 0.003260
+    
+    [Metrics @ Optimal PA-F1 Threshold (0.012037)]
+    Point-Adjusted F1 (PA-F1):    0.009584
+    Point-Adjusted Precision: 0.004831
+    Point-Adjusted Recall:    0.584131
+    
+    (Standard Metrics at this threshold)
+    Standard F1-Score:    0.009584
+    Standard Precision: 0.004831
+    Standard Recall:    0.584131
+    
+    =================================================
+
+
+    =================================================
+    Anomaly Detection Evaluation Results
+    Model: adapter_financial.pth
+    Dataset: Financial_test
+    Timestamp: Sun Nov  2 19:36:10 2025
+    =================================================
+    
+    [Execution Summary]
+    Total Evaluation Time: 1786.65s
+    Inference Time: 1760.93s
+    Total Time Points: 1000000
+    Total Windows: 83326
+    
+    [Overall Performance (Point-wise)]
+    Area Under ROC Curve (AUC-ROC): 0.499028
+    Area Under PR Curve (AUC-PR): 0.043549
+    
+    [Metrics @ Optimal PA-F1 Threshold (0.044327)]
+    Point-Adjusted F1 (PA-F1):    0.080022
+    Point-Adjusted Precision: 0.041691
+    Point-Adjusted Recall:    0.993291
+    
+    (Standard Metrics at this threshold)
+    Standard F1-Score:    0.083439
+    Standard Precision: 0.043549
+    Standard Recall:    0.993245
+    
+    =================================================
+    
+    
