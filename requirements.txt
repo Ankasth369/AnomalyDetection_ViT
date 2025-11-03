@@ -1,0 +1,12 @@
+numpy
+pandas
+scikit-learn
+scipy
+wfdb
+torch
+torchvision
+torchaudio
+transformers
+streamlit
+plotly
+matplotlib
