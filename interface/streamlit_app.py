@@ -16,7 +16,7 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 
 # --- CRITICAL FIX: Manually add the Kaggle root to the Python path ---
 # This is a more robust fix for Kaggle's complex file structure
-sys.path.append("/kaggle/working/advanced/Experiment")
+sys.path.append("/kaggle/working/dl-project/Experiment")
 # --- END FIX ---
 
 # --- Import Project Modules ---
@@ -33,7 +33,7 @@ except ImportError as e:
 
 
 # --- Configuration ---
-KAGGLE_WORKING_DIR = "/kaggle/working/advanced/Experiment" # Set the root path
+KAGGLE_WORKING_DIR = "/kaggle/working/dl-project/Experiment" # Set the root path
 CHECKPOINT_DIR = os.path.join(KAGGLE_WORKING_DIR, "models/trained_weights/")
 DEFAULT_MODEL_NAME = "adapter_smd.pth" # Use your best-performing model (e.g., SMD)
 OUTPUT_SPATIAL_SIZE_DEFAULT = 224 # Must match your loader
