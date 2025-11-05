@@ -27,8 +27,8 @@ try:
     from models.ViTAdapterModel import ViTAdapterAnomalyModel
 except ImportError as e:
     st.error(f"Fatal Import Error: {e}.")
-    st.error("I tried adding '/kaggle/working/' to the path, but still couldn't find your files.")
-    st.error("Please ensure your 'src' and 'models' folders are in '/kaggle/working/'")
+    st.error("I tried adding '/kaggle/working/dl-project/Experiment' to the path, but still couldn't find your files.")
+    st.error("Please ensure your 'src' and 'models' folders are in that directory.")
     st.stop()
 
 
@@ -38,8 +38,47 @@ CHECKPOINT_DIR = os.path.join(KAGGLE_WORKING_DIR, "models/trained_weights/")
 DEFAULT_MODEL_NAME = "adapter_smd.pth" # Use your best-performing model (e.g., SMD)
 OUTPUT_SPATIAL_SIZE_DEFAULT = 224 # Must match your loader
 
-# --- Model & Data Loading (Cached) ---
+# --- FIX 1: Add a threshold dictionary ---
+# These are the "Best Threshold" values from your evaluation logs
+MODEL_THRESHOLDS = {
+    "adapter_smd.pth": 0.080702,
+    "adapter_mitbih.pth": 0.012037,
+    "adapter_financial.pth": 0.044327
+    # Add any other models you have
+}
+# --- END FIX ---
 
+# --- FIX 2: Add padding helper function ---
+def _pad_dataframe(df: pd.DataFrame, features: list, max_vars: int) -> pd.DataFrame:
+    """Pads a dataframe with zero columns to match max_vars."""
+    label_col_present = 'anomaly' in df.columns
+    
+    padding_cols_count = max_vars - len(features)
+    if padding_cols_count > 0:
+        padding_df = pd.DataFrame(np.zeros((df.shape[0], padding_cols_count)), 
+                                  columns=[f'padding_{i+1}' for i in range(padding_cols_count)],
+                                  index=df.index)
+        
+        feature_df = df[features]
+        
+        if label_col_present:
+            label_col = df[['anomaly']]
+            df = pd.concat([feature_df, padding_df, label_col], axis=1)
+        else:
+            # This case happens if user uploads file with no label
+            df = pd.concat([feature_df, padding_df], axis=1)
+            
+    elif label_col_present:
+         # If no padding needed, just ensure correct order
+         df = pd.concat([df[features], df[['anomaly']]], axis=1)
+    else:
+         df = df[features]
+         
+    return df
+# --- END FIX ---
+
+
+# --- Model & Data Loading (Cached) ---
 @st.cache(allow_output_mutation=True)
 def load_model(model_path):
     """Loads the trained model weights and configuration."""
@@ -67,7 +106,7 @@ def load_model(model_path):
         st.error(f"Error loading model: {e}")
         return None, None, None, None
 
-# --- CRITICAL FIX: Update run_inference to use the "FAST" loader/model ---
+# --- Inference Function (Unchanged) ---
 def run_inference(_model, data_path, time_window_len, max_vars, device):
     """
     Runs inference on an entire uploaded file and returns scores.
@@ -84,7 +123,7 @@ def run_inference(_model, data_path, time_window_len, max_vars, device):
         )
     except Exception as e:
         st.error(f"Error loading data file: {e}")
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
         
     progress_bar = st.progress(0)
     progress_text = st.empty()
@@ -166,8 +205,13 @@ def run_inference(_model, data_path, time_window_len, max_vars, device):
     point_contributions_df = pd.DataFrame(point_contributions).replace(0, np.nan).fillna(method='ffill').fillna(0)
     point_contributions = point_contributions_df.values
     
-    return y_true_win, y_scores_win, y_true_pointwise, y_scores_pointwise, point_contributions, eval_dataset.feature_cols, eval_dataset.data
-# --- END OF CRITICAL FIX ---
+    # --- FIX: Return the "has_labels" boolean ---
+    # (We get this from the eval_dataset, which gets it from the CSV)
+    has_labels = 1 in eval_dataset.labels
+    # --- END FIX ---
+
+    return y_true_win, y_scores_win, y_true_pointwise, y_scores_pointwise, point_contributions, eval_dataset.feature_cols, eval_dataset.data, has_labels
+# --- END OF INFERENCE FUNCTION ---
 
 
 # --- Main Streamlit App ---
@@ -207,7 +251,7 @@ with st.sidebar:
 
     st.header("2. Upload Data")
     uploaded_file = st.file_uploader(
-        "Upload a preprocessed CSV file for evaluation",
+        "Upload a CSV file for evaluation", # Changed text
         type="csv"
     )
 
@@ -215,16 +259,50 @@ with st.sidebar:
 if uploaded_file and model:
     st.header(f"Analysis: {uploaded_file.name}")
     
-    # Save temp file
+    # --- FIX 2: Pre-process the uploaded file ---
+    # Load the user's file into a pandas DataFrame first
+    df = pd.read_csv(uploaded_file)
+    
+    # Check if labels exist. If not, create a dummy 'anomaly' column
+    if 'anomaly' in df.columns:
+        # Check if there are any actual anomalies in the label column
+        if 1 in df['anomaly'].unique():
+            has_labels = True
+            st.success("Ground truth 'anomaly' column found! Metrics will be calculated.")
+        else:
+            has_labels = False
+            st.info("Found 'anomaly' column, but it contains no anomalies. Ground truth will be hidden.")
+            df['anomaly'] = 0 # Treat as if no labels
+    else:
+        has_labels = False
+        df['anomaly'] = 0  # Create dummy labels so the loader doesn't crash
+        st.warning("No 'anomaly' column found. Metrics will not be calculated, and ground truth will not be shown.")
+
+    # Get feature columns (everything that isn't the label)
+    feature_cols = [col for col in df.columns if col != 'anomaly']
+    
+    # Pad or truncate features to match M_max (38)
+    if len(feature_cols) > M_max:
+        st.warning(f"File has {len(feature_cols)} features. Truncating to the first {M_max}.")
+        feature_cols = feature_cols[:M_max]
+        # Re-build DataFrame with the correct columns
+        df = df[feature_cols + ['anomaly']]
+    elif len(feature_cols) < M_max:
+        st.warning(f"File has {len(feature_cols)} features. Padding with zeros to {M_max}.")
+        df = _pad_dataframe(df, feature_cols, M_max)
+    
+    # Save this *new, clean* file to a temp path
     temp_dir = os.path.join(KAGGLE_WORKING_DIR, "temp")
     os.makedirs(temp_dir, exist_ok=True)
-    temp_path = os.path.join(temp_dir, uploaded_file.name)
-    with open(temp_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    temp_path = os.path.join(temp_dir, "processed_upload.csv")
+    df.to_csv(temp_path, index=False)
+    # --- END FIX ---
     
-    y_true_win, y_scores_win, y_true_points, point_scores, point_contributions, feature_names, raw_data = run_inference(
+    # Now, run_inference uses the *clean* file.
+    y_true_win, y_scores_win, y_true_points, point_scores, point_contributions, feature_names, raw_data, _ = run_inference(
         model, temp_path, T, M_max, device
     )
+    # Note: We use the 'has_labels' boolean from our logic above, not from run_inference
     
     if y_true_win is not None:
         st.success("Inference complete!")
@@ -232,8 +310,9 @@ if uploaded_file and model:
         # --- 3. Threshold Slider & Metrics (Deliverable 4) ---
         st.header("3. Performance Tuning & Metrics")
         
-        # --- METRIC FIX: Use the correct threshold function ---
-        default_thresh, _, _, _ = find_best_point_adjust_f1_threshold(point_scores, y_true_points)
+        # --- FIX 1: Get the pre-calculated threshold ---
+        default_thresh = MODEL_THRESHOLDS.get(selected_model_name, 0.05)
+        # --- END FIX ---
         
         score_max = float(np.max(point_scores)) if len(point_scores) > 0 else (default_thresh + 0.1)
         if score_max <= default_thresh:
@@ -250,25 +329,31 @@ if uploaded_file and model:
             format="%.5f"
         )
         
-        y_pred_points = (point_scores > best_thresh).astype(int)
-        
-        best_f1 = f1_score(y_true_points, y_pred_points)
-        prec = precision_score(y_true_points, y_pred_points, zero_division=0)
-        recall = recall_score(y_true_points, y_pred_points, zero_division=0)
-        
-        # We now use the point-wise arrays for all metrics
-        pa_f1, pa_prec, pa_recall = point_adjust_f1_score(y_true_points, y_pred_points)
-        
-        st.subheader("Metrics @ Selected Threshold")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Point-Adjusted F1", f"{pa_f1:.4f}")
-        col2.metric("Point-Adjusted Precision", f"{pa_prec:.4f}")
-        col3.metric("Point-Adjusted Recall", f"{pa_recall:.4f}")
+        # --- FIX 3: Only show metrics if we have labels ---
+        if has_labels:
+            y_pred_points = (point_scores > best_thresh).astype(int)
+            
+            best_f1 = f1_score(y_true_points, y_pred_points)
+            prec = precision_score(y_true_points, y_pred_points, zero_division=0)
+            recall = recall_score(y_true_points, y_pred_points, zero_division=0)
+            
+            # We now use the point-wise arrays for all metrics
+            pa_f1, pa_prec, pa_recall = point_adjust_f1_score(y_true_points, y_pred_points)
+            
+            st.subheader("Metrics @ Selected Threshold")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Point-Adjusted F1", f"{pa_f1:.4f}")
+            col2.metric("Point-Adjusted Precision", f"{pa_prec:.4f}")
+            col3.metric("Point-Adjusted Recall", f"{pa_recall:.4f}")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Standard F1", f"{best_f1:.4f}")
-        col2.metric("Standard Precision", f"{prec:.4f}")
-        col3.metric("Standard Recall", f"{recall:.4f}")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Standard F1", f"{best_f1:.4f}")
+            col2.metric("Standard Precision", f"{prec:.4f}")
+            col3.metric("Standard Recall", f"{recall:.4f}")
+        else:
+            st.subheader("Metrics")
+            st.info("Metrics cannot be calculated because the uploaded file does not contain a valid 'anomaly' column.")
+        # --- END FIX ---
 
         
         # --- 4. Plot Visualization (Deliverables 2 & 3) ---
@@ -335,6 +420,8 @@ if uploaded_file and model:
         
         # --- Add Anomaly Regions (Deliverable 3) ---
         # Add shaded red regions for detected anomalies
+        y_pred_points = (point_scores > best_thresh).astype(int)
+        anomaly_indices = np.where(y_pred_points == 1)[0]
         start_idx = -1
         for i, idx in enumerate(anomaly_indices):
             if start_idx == -1:
@@ -350,22 +437,23 @@ if uploaded_file and model:
                 )
                 start_idx = -1 
         
-        # --- Add GROUND TRUTH Regions ---
-        true_anomaly_indices = np.where(y_true_points == 1)[0]
-        start_idx = -1
-        for i, idx in enumerate(true_anomaly_indices):
-            if start_idx == -1:
-                start_idx = idx 
-            
-            if (i + 1 == len(true_anomaly_indices)) or (true_anomaly_indices[i+1] > idx + 1):
-                end_idx = idx
-                fig.add_vrect(
-                    x0=start_idx, x1=end_idx,
-                    fillcolor="rgba(0, 255, 0, 0.2)", # Light Green
-                    layer="below", line_width=0,
-                    name="True Anomaly"
-                )
-                start_idx = -1
+        # --- Add GROUND TRUTH Regions (Only if they exist) ---
+        if has_labels:
+            true_anomaly_indices = np.where(y_true_points == 1)[0]
+            start_idx = -1
+            for i, idx in enumerate(true_anomaly_indices):
+                if start_idx == -1:
+                    start_idx = idx 
+                
+                if (i + 1 == len(true_anomaly_indices)) or (true_anomaly_indices[i+1] > idx + 1):
+                    end_idx = idx
+                    fig.add_vrect(
+                        x0=start_idx, x1=end_idx,
+                        fillcolor="rgba(0, 255, 0, 0.2)", # Light Green
+                        layer="below", line_width=0,
+                        name="True Anomaly"
+                    )
+                    start_idx = -1
 
         # Clean up legend to avoid duplicate entries
         names = set()
