@@ -77,7 +77,6 @@ def _pad_dataframe(df: pd.DataFrame, features: list, max_vars: int) -> pd.DataFr
     return df
 # --- END FIX ---
 
-
 # --- Model & Data Loading (Cached) ---
 @st.cache(allow_output_mutation=True)
 def load_model(model_path):
@@ -106,7 +105,7 @@ def load_model(model_path):
         st.error(f"Error loading model: {e}")
         return None, None, None, None
 
-# --- Inference Function (Unchanged) ---
+# --- Inference Function ---
 def run_inference(_model, data_path, time_window_len, max_vars, device):
     """
     Runs inference on an entire uploaded file and returns scores.
@@ -205,11 +204,9 @@ def run_inference(_model, data_path, time_window_len, max_vars, device):
     point_contributions_df = pd.DataFrame(point_contributions).replace(0, np.nan).fillna(method='ffill').fillna(0)
     point_contributions = point_contributions_df.values
     
-    # --- FIX: Return the "has_labels" boolean ---
-    # (We get this from the eval_dataset, which gets it from the CSV)
+    # Check if the dataset actually had any labels
     has_labels = 1 in eval_dataset.labels
-    # --- END FIX ---
-
+    
     return y_true_win, y_scores_win, y_true_pointwise, y_scores_pointwise, point_contributions, eval_dataset.feature_cols, eval_dataset.data, has_labels
 # --- END OF INFERENCE FUNCTION ---
 
@@ -218,14 +215,14 @@ def run_inference(_model, data_path, time_window_len, max_vars, device):
 
 st.set_page_config(layout="wide", page_title="ViT-Adapter Anomaly Detection")
 st.title("👁️‍🗨️ Time-Series Anomaly Detection with ViT-Adapter")
-st.markdown("Upload a preprocessed CSV file (from `data/processed/`) to visualize anomalies.")
+st.markdown("Upload a CSV file to visualize anomalies. (Must have < 38 numeric features)")
 
 # --- 1. Sidebar for Model and File Selection ---
 with st.sidebar:
     st.header("1. Model Selection")
     
     if not os.path.exists(CHECKPOINT_DIR):
-        st.error(f"Checkpoint directory not found: {CHECKPOINT_DIR}. Did you copy your 'models' folder to /kaggle/working/?")
+        st.error(f"Checkpoint directory not found: {CHECKPOINT_DIR}. Did you copy your 'models' folder to /kaggle/working/dl-project/Experiment?")
         st.stop()
         
     model_files = [f for f in os.listdir(CHECKPOINT_DIR) if f.endswith('.pth')]
@@ -251,7 +248,7 @@ with st.sidebar:
 
     st.header("2. Upload Data")
     uploaded_file = st.file_uploader(
-        "Upload a CSV file for evaluation", # Changed text
+        "Upload a CSV file for evaluation",
         type="csv"
     )
 
@@ -261,7 +258,11 @@ if uploaded_file and model:
     
     # --- FIX 2: Pre-process the uploaded file ---
     # Load the user's file into a pandas DataFrame first
-    df = pd.read_csv(uploaded_file)
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception as e:
+        st.error(f"Could not read CSV file. Error: {e}")
+        st.stop()
     
     # Check if labels exist. If not, create a dummy 'anomaly' column
     if 'anomaly' in df.columns:
@@ -281,15 +282,42 @@ if uploaded_file and model:
     # Get feature columns (everything that isn't the label)
     feature_cols = [col for col in df.columns if col != 'anomaly']
     
+    # --- NEW ROBUSTNESS FIX ---
+    with st.spinner("Sanitizing data... coercing all feature columns to numeric..."):
+        original_feature_count = len(feature_cols)
+        
+        for col in feature_cols:
+            # Try to force the column to be numeric.
+            # errors='coerce' will turn any bad values (e.g., "Monday") into NaN
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+        # Drop any columns that are *still* non-numeric (e.g., all strings)
+        # or that became all-NaN because they were 100% strings
+        df = df.dropna(axis=1, how='all')
+        
+        # Get the new, clean list of feature columns
+        feature_cols = [col for col in df.columns if col != 'anomaly']
+        
+        if len(feature_cols) != original_feature_count:
+            st.warning(f"Dropped {original_feature_count - len(feature_cols)} non-numeric columns from the data.")
+        
+        # Fill any remaining NaNs (from 'coerce') with 0
+        df[feature_cols] = df[feature_cols].fillna(0)
+    # --- END NEW FIX ---
+
     # Pad or truncate features to match M_max (38)
     if len(feature_cols) > M_max:
-        st.warning(f"File has {len(feature_cols)} features. Truncating to the first {M_max}.")
+        st.warning(f"File has {len(feature_cols)} numeric features. Truncating to the first {M_max}.")
         feature_cols = feature_cols[:M_max]
-        # Re-build DataFrame with the correct columns
         df = df[feature_cols + ['anomaly']]
     elif len(feature_cols) < M_max:
-        st.warning(f"File has {len(feature_cols)} features. Padding with zeros to {M_max}.")
+        st.warning(f"File has {len(feature_cols)} numeric features. Padding with zeros to {M_max}.")
         df = _pad_dataframe(df, feature_cols, M_max)
+    elif len(feature_cols) == 0:
+        st.error("No valid numeric feature columns found in the uploaded file. Cannot proceed.")
+        st.stop()
+        
+    st.success(f"File successfully cleaned and standardized to {M_max} features.")
     
     # Save this *new, clean* file to a temp path
     temp_dir = os.path.join(KAGGLE_WORKING_DIR, "temp")
@@ -297,6 +325,7 @@ if uploaded_file and model:
     temp_path = os.path.join(temp_dir, "processed_upload.csv")
     df.to_csv(temp_path, index=False)
     # --- END FIX ---
+
     
     # Now, run_inference uses the *clean* file.
     y_true_win, y_scores_win, y_true_points, point_scores, point_contributions, feature_names, raw_data, _ = run_inference(
